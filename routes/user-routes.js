@@ -1,12 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const bcryptjs = require('bcryptjs');
-const UserModel = require('../model/UserModel.js');
+const cloudinary = require('cloudinary').v2;
+const UserModel = require('../models/UserModel.js');
+
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+const secret = process.env.SECRET;
 
 router.post(
-    '/create',            // http://localhost:3001/users/create/
+    '/create',            // http://localhost:3001/users/create
     function(req, res) {
-
+        
 
         const formData = {
             firstname: req.body.firstname,
@@ -20,7 +25,7 @@ router.post(
         UserModel
         .findOne({ email: formData.email })
         .then(
-            function(dbDocument) {
+            async function(dbDocument) {
                 // 2. If email exists, reject the request
                 if( dbDocument ) {
                     res.send("Sorry, an account with that email address already exists.");
@@ -28,6 +33,25 @@ router.post(
 
                 // 3. If email does not exist, 
                 else {
+
+                    // If avatar file is included
+                    if( Object.values(req.files).length > 0 ) {
+                        const filePath = Object.values(req.files)[0].path;
+                        // Upload their picture (if provided)
+                        await cloudinary.uploader.upload(
+                            filePath,
+                            function (cloudinaryErr, cloudinaryResult) {
+                                if(cloudinaryErr) {
+                                    console.log(cloudinaryErr);
+                                    res.json({message: "Error uploading image."});
+                                } else {
+                                    formData.avatar = cloudinaryResult.url;
+                                }
+                            }
+                        );
+                    }
+
+
                     // 4.1. Generate the salt
                     bcryptjs.genSalt(
                         function(err, theSalt) {
@@ -37,7 +61,6 @@ router.post(
                                 formData.password,
                                 theSalt,
                                 function(err, theHash) {
-                                    
                                     // 5. Reassign the original password with the hash
                                     formData.password = theHash;
 
@@ -64,14 +87,13 @@ router.post(
         )
         .catch(
             function(mongooseError) {
-                console.log(mongoosError);
+                console.log(mongooseError);
                 res.send(mongooseError);
             }
         )
     
     }
 );
-
 
 router.post(
     '/find', 
@@ -89,7 +111,88 @@ router.post(
         )
         .catch()
     }
+);
+
+// /login
+router.post(
+    '/login',
+    (req, res) => {
+
+        // npm packages: passport, passport-jwt, jsonwebtoken
+
+        // Step 1. Capture formData (email & password)
+        const formData = {
+            email: req.body.email,
+            password: req.body.password
+        }
+
+
+        // Step 2a. In database, find account that matches email
+        UserModel.findOne(
+            {email: formData.email},
+            (err, document) => {
+
+                // Step 2b. If email NOT match, reject the login request
+                if(!document) {
+                    res.json({message: "Please check email or password"});
+                }
+
+                // Step 3. If there's matching email, examine the document's password
+                else {
+
+                    // Step 4. Compare the encrypted password in db with incoming password
+                    bcryptjs.compare(formData.password, document.password)
+                    .then(
+                        (isMatch) => {
+
+                            // Step 5a. If the password matches, generate web token (JWT)
+                            if(isMatch === true) {
+                                // Step 6. Send the JWT to the client
+                                const payload = { 
+                                    id: document.id,
+                                    email: document.email
+                                };
+
+                                jwt.sign(
+                                    payload,
+                                    secret,
+                                    (err, jsonwebtoken) => {
+                                        res.json(
+                                            {
+                                                message: 'Login successful',
+                                                jsonwebtoken: jsonwebtoken
+                                            }
+                                        )
+                                    }
+                                )
+
+                            }
+
+                            // Step 5b. If password NOT match, reject login request
+                            else {
+                                res.json({message: "Please check email or password"})
+                            }
+                        }
+                    )
+                }
+            }
+        )
+    }
 )
-               
-                    
+
+router.get(
+    '/get',
+    function(req, res) {
+        UserModel
+        .find()
+        .then(
+            function(dbDocuments) {
+                res.json(dbDocuments)
+            }  
+        )
+        .catch()
+    }
+);
+
+
 module.exports = router;
